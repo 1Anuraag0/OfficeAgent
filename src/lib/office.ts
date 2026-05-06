@@ -149,77 +149,94 @@ export async function deleteParagraphs(startIndex: number, endIndex: number): Pr
 
 export async function deletePages(startPage: number, endPage: number): Promise<void> {
   return safeWordRun(async (context: any) => {
-    const paragraphs = context.document.body.paragraphs;
+    const body = context.document.body;
+    const paragraphs = body.paragraphs;
     paragraphs.load("items");
     await context.sync();
 
-    const ranges: any[] = paragraphs.items.map((p: any) => {
-      const r = p.getRange("Whole");
-      r.load("pageNumber");
-      return r;
-    });
+    const totalParas = paragraphs.items.length;
+    if (totalParas === 0) return;
 
-    let usePageAPI = false;
-    try {
-      await context.sync();
-      if (ranges.length > 0 && typeof ranges[0].pageNumber === "number") {
-        usePageAPI = true;
-      }
-    } catch {
-      usePageAPI = false;
-    }
+    // Word Online doesn't know pages. 
+    // We assume ~30 paragraphs make up your front sheet.
+    const PARAS_PER_PAGE = 30;
+    const startIdx = (startPage - 1) * PARAS_PER_PAGE;
 
-    if (usePageAPI) {
-      const toDelete = paragraphs.items
-        .filter((_: any, i: number) => {
-          const pg: number = ranges[i].pageNumber;
-          return pg >= startPage && pg <= endPage;
-        })
-        .reverse();
-      for (const para of toDelete) para.delete();
-    } else {
-      const PARAS_PER_PAGE = 40;
-      const start = (startPage - 1) * PARAS_PER_PAGE;
-      const end = Math.min(endPage * PARAS_PER_PAGE - 1, paragraphs.items.length - 1);
-      for (let i = end; i >= start; i--) {
-        paragraphs.items[i].delete();
-      }
-    }
+    if (startIdx >= totalParas) return;
+
+    // 1. Get the starting point (e.g., the end of page 1)
+    const startRange = paragraphs.items[startIdx].getRange("Start");
+
+    // 2. Target the absolute end of the document
+    const endRange = body.getRange("End");
+
+    // 3. Create one massive selection bridging the two
+    const massiveRangeToDelete = startRange.expandTo(endRange);
+
+    // 4. NUKE it in a single command. No loops, no freezing.
+    massiveRangeToDelete.delete();
+
     await context.sync();
   });
 }
 
 export async function keepOnlyParagraphsWithText(searchText: string): Promise<void> {
   return safeWordRun(async (context: any) => {
-    const paragraphs = context.document.body.paragraphs;
-    paragraphs.load("text");
+    const body = context.document.body;
+    const paragraphs = body.paragraphs;
+
+    // Load all paragraphs and their text
+    paragraphs.load("items, text");
     await context.sync();
 
-    const lower = searchText.toLowerCase();
+    const lowerSearchText = searchText.toLowerCase();
 
-    const matchIndices = new Set<number>();
-    paragraphs.items.forEach((p: any, i: number) => {
-      if (p.text.toLowerCase().includes(lower)) {
-        matchIndices.add(i);
-      }
-    });
+    // 1. Find the index of the paragraph containing the search text (e.g., your Roll Number)
+    const targetIndex = paragraphs.items.findIndex((p: any) =>
+      p.text.toLowerCase().includes(lowerSearchText)
+    );
 
-    console.log(`[OfficeAgent] Found ${matchIndices.size} matching paragraphs out of ${paragraphs.items.length}`);
-
-    if (matchIndices.size === 0) {
-      throw new Error(`No paragraphs found containing "${searchText}"`);
+    if (targetIndex === -1) {
+      throw new Error(`Could not find "${searchText}" in the document.`);
     }
 
-    for (let i = paragraphs.items.length - 1; i >= 0; i--) {
-      if (!matchIndices.has(i)) {
-        paragraphs.items[i].delete();
+    // 2. Find the START of this specific sheet 
+    // (Scanning upwards until we hit the "Maulana Abul Kalam" header)
+    let startIdx = 0;
+    for (let i = targetIndex; i >= 0; i--) {
+      if (paragraphs.items[i].text.includes("Maulana Abul Kalam")) {
+        startIdx = i;
+        break;
       }
     }
 
+    // 3. Find the END of this specific sheet 
+    // (Scanning downwards until we hit the NEXT "Maulana Abul Kalam" header)
+    let endIdx = paragraphs.items.length - 1;
+    for (let i = targetIndex + 1; i < paragraphs.items.length; i++) {
+      if (paragraphs.items[i].text.includes("Maulana Abul Kalam")) {
+        endIdx = i - 1; // The sheet ends right before the next header starts
+        break;
+      }
+    }
+
+    // 4. NUKE the Bottom Half (Delete everything after our sheet)
+    // We do this first so the paragraph indices don't shift!
+    if (endIdx < paragraphs.items.length - 1) {
+      const rangeAfter = paragraphs.items[endIdx + 1].getRange("Start").expandTo(body.getRange("End"));
+      rangeAfter.delete();
+    }
+
+    // 5. NUKE the Top Half (Delete everything before our sheet)
+    if (startIdx > 0) {
+      const rangeBefore = body.getRange("Start").expandTo(paragraphs.items[startIdx - 1].getRange("End"));
+      rangeBefore.delete();
+    }
+
+    // Sync to execute the massive deletion in real-time
     await context.sync();
   });
 }
-
 export async function formatByStyle(
   targetStyle: string,
   formatting: { bold?: boolean; italic?: boolean; color?: string; size?: number }

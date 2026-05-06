@@ -1,6 +1,6 @@
 <div align="center">
 
-# ⚡ Office Agent AI
+# <img width="55" height="45" alt="image" src="https://github.com/user-attachments/assets/f8af92a5-34e3-4dd4-9a3e-aa495f645ab0" />  Office Agent AI
 
 **AI-powered Word document manipulation through natural language.**
 
@@ -16,7 +16,7 @@
 
 ---
 
-## ✨ What is this?
+## 🤔 What is this?
 
 Office Agent AI is a **Microsoft Word add-in** that lets you control your documents using plain English. Instead of navigating menus and ribbons, just type what you want:
 
